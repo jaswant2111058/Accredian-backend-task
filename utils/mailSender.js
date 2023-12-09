@@ -1,6 +1,6 @@
 const nodemailer = require("nodemailer")
 
-function sendmail(username,email,token) {
+function sendmail(username,email,token,origin) {
   
   var transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -13,7 +13,7 @@ function sendmail(username,email,token) {
     from: 'jkstar0123@gmail.com',
     to: `${email}`,
     subject: 'registor email verification',
-    text: `<html><a href="${process.env.ORIGIN}/email/verification?token=${token}&username=${username}&email=${email}">Verify</a> </html>`
+    text: `<html><a href="${process.env.ORIGIN}${origin}?token=${token}&username=${username}&email=${email}">Verify</a> </html>`
   }
   console.log(mailOptions)
   transporter.sendMail(mailOptions, function (error, info) {

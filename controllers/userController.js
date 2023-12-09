@@ -1,11 +1,15 @@
-const users = require('../models/users');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const sendmail2 = require('../utils/mailSender')
 const connection = require("../mysqlDB/connection")
 const faker = require('faker')
+const path = require("path")
 
 // --------------authMiddleware-----------------
+
+
+
+
 
 // attach team_id (mongodb) with req
 exports.authMiddleware = async (req, res, next) => {
@@ -25,11 +29,10 @@ exports.authMiddleware = async (req, res, next) => {
         connection.query(sqlQuery, [decoded.email], (error, results, fields) => {
             if (error) {
                 console.error('Error executing query:', error);
-                connection.end();
-                return res.status(500).json({
-                    message: " Data Base is not working "
-                });
 
+                return res.status(500).json({
+                    message: "Data Base is not working"
+                });
             }
 
             // Process the results
@@ -44,15 +47,12 @@ exports.authMiddleware = async (req, res, next) => {
             }
 
         });
-
-
     } catch (error) {
         if (error instanceof jwt.TokenExpiredError) {
             return res.status(401).json({
                 message: "Token expired"
             });
         }
-
         console.log(typeof (error));
         res.status(500).json({
             message: "Something went wrong"
@@ -74,7 +74,7 @@ exports.login = async (req, res) => {
         connection.query(sqlQuery, [email_userName, email_userName], (error, results, fields) => {
             if (error) {
                 console.error('Error executing query:', error);
-                connection.end();
+
                 res.status(500).json({
                     message: " Data Base is not working "
                 });
@@ -97,18 +97,18 @@ exports.login = async (req, res) => {
 
                 // update login_count
                 res.status(200).send({
-                    massage: `user logged in`, user: {
+                    message: `user logged in`, user: {
                         user_id: results._id,
                         email: results.email,
-                        username: results.username,
+                        username: results.userName,
                         token: token,
                         expires_in: new Date(Date.now() + 60 * 60 * 1000),
                     }
                 });
 
             } else {
-                connection.end();
-                res.status(200).json({ massage: "user does not exist" })
+
+                res.status(401).json({ message: "user does not exist" })
             }
 
         });
@@ -134,26 +134,23 @@ exports.signup = async (req, res) => {
         connection.query(sqlQuery, [username, email], (error, results, fields) => {
             if (error) {
                 console.error('Error executing query:', error);
-                connection.end();
+
                 res.status(500).json({
                     message: " Data Base is not working "
                 });
             }
-
             // Process the results
             if (results.length > 0) {
-                connection.end();
-
-                res.send({ message: "email or user Name  allready exist" })
+                res.status(401).send({ message: "email or user Name  allready exist" })
 
             } else {
 
                 const token = jwt.sign({ password: password }, process.env.JWT_SECRET, {
                     expiresIn: `${1000 * 60 * 5}`
                 });
-                sendmail2(username, email, token)
-                connection.end();
-                res.status(200).sendFile(__dirname + "../public/page/emailSend.html")
+                sendmail2(username, email, token,"/email/verify")
+
+                res.status(200).send({ message: "Email has been sent to " + email })
             }
 
         });
@@ -168,69 +165,112 @@ exports.signup = async (req, res) => {
 
 
 exports.verifySave = async (req, res) => {
-
     try {
+        const token = req.query.token;
+        const username = req.query.username;
+        const email = req.query.email;
 
-        const token = req.query.token
-        const username = req.query.username
-        const email = req.query.email
-        const password = jwt.verify(token, process.env.JWT_SECRET);
-        if (password) {
-            bcrypt.hash(password.password, 12, async function (err, hash) {
+        // Verify JWT token
+        const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
 
-                const detail = { _id: faker.datatype.uuid(), email: email, password: hash, username: username }
-                const insertQuery = 'INSERT INTO userDetail SET ?';
-                connection.query(insertQuery, detail, (error, results, fields) => {
-                    if (error) {
-                        console.error('Error inserting data: ' + error);
-                    } else {
-                        console.log('Data inserted successfully.');
-                        connection.end();
-                        res.sendFile(__dirname + "../public/pages/verifyEmail.html")
-                    }
+        const hashedPassword = await bcrypt.hash(decodedToken.password, 12);
 
-                });
+        // Prepare user detail object
+        const detail = {
+            _id: faker.datatype.uuid(),
+            email: email,
+            password: hashedPassword,
+            userName: username
+        };
+        console.log(detail);
 
-            })
-        }
-
+        // Insert data into the database
+        const insertQuery = 'INSERT INTO userDetail SET ?';
+        connection.query(insertQuery, detail, (error, results, fields) => {
+            if (error) {
+                console.error('Error inserting data: ' + error);
+                res.status(500).json({ message: "Error inserting data" });
+            } else {
+                console.log('Data inserted successfully.');
+                const filePath = path.join(__dirname, '../public/verifyEmail.html');
+                res.sendFile(filePath);
+            }
+        });
     } catch (err) {
         console.log(err);
-        res.status(500).json({
-            message: "Something went wrong"
-        });
+        res.status(500).json({ message: "Something went wrong" });
     }
+};
 
-}
 
 
 exports.resetPassword = async (req, res) => {
 
     try {
-        const { email, otp, password } = req.body;
-        const user = await users.findOne({ email });
+        const { email, password } = req.body;
 
-        if (!user) {
-            return res.status(400).json({
-                message: "user email does not exist"
-            });
-        }
-        if (user.otp == otp) {
-            bcrypt.hash(password, 12, async function (err, hash) {
-                await users.updateOne({ email }, { password: hash })
-            })
-            res.status(200).json({
-                message: "password changed successfully",
+        const sqlQuery = `SELECT * FROM userDetail WHERE email = ?`;
 
-            });
-        }
-        else {
-            res.send(
-                {
-                    massage: 'enter otp is not correct'
-                }
-            ).status(400)
-        }
+        connection.query(sqlQuery, [email], (error, results, fields) => {
+            if (error) {
+                console.error('Error executing query:', error);
+
+                res.status(500).json({
+                    message: " Data Base is not working "
+                });
+            }
+            // Process the results
+            if (!(results.length > 0)) {
+                res.status(400).send({ message: "email or user Name  not exist" })
+            } else {
+
+                const token = jwt.sign({ password: password }, process.env.JWT_SECRET, {
+                    expiresIn: `${1000 * 60 * 5}`
+                });
+                sendmail2(results._id, email, token,"/password/reset/verify")
+                res.status(200).send({ message: "Email has been sent to " + email })
+            }
+        });
+    }
+    catch (err) {
+        console.log(err);
+        res.status(500).json({
+            message: "Something went wrong"
+        });
+    }
+}
+
+
+exports.resetPasswordVerify = async (req, res) => {
+    try {
+        const token = req.query.token;
+        const _id = req.query.username
+
+        // Verify JWT token
+        const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+        console.log(decodedToken);
+
+        // Hash the password asynchronously
+        const hashedPassword = await bcrypt.hash(decodedToken.password, 12);
+
+        // Prepare user detail object
+        const updatedDetails = {
+            password: hashedPassword,
+        };
+        console.log(updatedDetails);
+
+        // Update data in the database
+        const updateQuery = 'UPDATE userDetail SET ? WHERE _id = ?';
+        connection.query(updateQuery, [updatedDetails, _id], (error, results, fields) => {
+            if (error) {
+                console.error('Error updating data: ' + error);
+                res.status(500).json({ message: "Error updating data" });
+            } else {
+                console.log('Data updated successfully.');
+                const filePath = path.join(__dirname, '../public/emailSend.html');
+                res.sendFile(filePath);
+            }
+        });
     } catch (err) {
         console.log(err);
         res.status(500).json({
